@@ -1,7 +1,11 @@
 export interface IMockEndpoint {
   endpointId: string;
-  name: string;
-  schemaData: Record<string, unknown> | Array<unknown>;
+  userId: string;
+  endpointUrl: string;
+  schemaBlueprint: Record<string, unknown>;
+  dataPayload: Array<unknown>;
+  latencyMs: number;
+  statusCode: number;
   createdAt: Date;
   expiresAt: Date;
 }

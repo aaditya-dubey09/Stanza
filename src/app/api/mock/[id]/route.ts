@@ -1,65 +1,163 @@
-import { NextResponse } from 'next/server';
 import connectDB from '@/src/lib/mongodb';
 import MockEndpoint from '@/src/models/MockEndpoint';
+import { NextRequest, NextResponse } from 'next/server';
 
-interface RouteParams {
+interface RouteContext {
   params: Promise<{
     id: string;
   }>;
 }
 
-export async function GET(request: Request, { params }: RouteParams) {
+interface MockItem {
+  id: string | number;
+  [key: string]: unknown;
+}
+
+// ================= READ (GET) =================
+export async function GET(request: NextRequest, context: RouteContext) {
   try {
-    const { id } = await params;
-    const urlObj = new URL(request.url);
-    const searchParams = urlObj.searchParams;
+    const { id } = await context.params;
+    const searchParams = request.nextUrl.searchParams;
 
-    // Optional simulation parameters
     const delayParam = searchParams.get('delay');
-    const statusParam = searchParams.get('status');
-
-    // Simulate custom latency if requested (max 10 seconds to prevent abuse)
-    if (delayParam) {
-      const delayMs = Math.min(Number(delayParam) || 0, 10000);
-      if (delayMs > 0) {
-        await new Promise((resolve) => setTimeout(resolve, delayMs));
-      }
-    }
+    const statusParam = searchParams.get('status') || searchParams.get('statusCode');
 
     await connectDB();
-
-    // Find the mock endpoint in MongoDB
     const mockRecord = await MockEndpoint.findOne({ endpointId: id });
 
     if (!mockRecord) {
-      return NextResponse.json(
-        { error: 'Mock endpoint not found or has expired.' },
-        { status: 404 }
-      );
+      return NextResponse.json({ error: 'Mock endpoint not found or expired.' }, { status: 404 });
     }
 
-    // Handle custom forced status code testing if requested
-    if (statusParam) {
-      const forcedStatus = Number(statusParam);
-      if (forcedStatus >= 100 && forcedStatus < 600) {
-        return NextResponse.json(
-          { 
-            error: `Simulated error response with status ${forcedStatus}`,
-            endpointId: id 
-          },
-          { status: forcedStatus }
-        );
-      }
+    const latency = parseInt(delayParam || String(mockRecord.latencyMs || 0), 10);
+    const statusCode = parseInt(statusParam || String(mockRecord.statusCode || 200), 10);
+
+    if (latency > 0) {
+      const clampedDelay = Math.min(latency, 10000);
+      await new Promise((resolve) => setTimeout(resolve, clampedDelay));
     }
 
-    // Return the stored mock JSON schema payload successfully
-    return NextResponse.json(mockRecord.schemaData, { status: 200 });
-
+    return NextResponse.json(mockRecord.dataPayload, { status: statusCode });
   } catch (error: unknown) {
-    console.error('Mock Serving Error:', error);
-    return NextResponse.json(
-      { error: 'Internal Server Error while serving mock endpoint.' },
-      { status: 500 }
-    );
+    console.error('Mock GET Error:', error);
+    return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 });
+  }
+}
+
+// ================= CREATE (POST) =================
+export async function POST(request: NextRequest, context: RouteContext) {
+  try {
+    const { id } = await context.params;
+    const body = (await request.json()) as Record<string, unknown>;
+
+    await connectDB();
+    const mockRecord = await MockEndpoint.findOne({ endpointId: id });
+
+    if (!mockRecord) {
+      return NextResponse.json({ error: 'Mock endpoint not found or expired.' }, { status: 404 });
+    }
+
+    const payload = (mockRecord.dataPayload || []) as MockItem[];
+    const maxId = payload.reduce((max, item) => {
+      const itemIdNum = typeof item.id === 'number' ? item.id : Number(item.id) || 0;
+      return itemIdNum > max ? itemIdNum : max;
+    }, 0);
+
+    const newItem: MockItem = {
+      id: maxId + 1,
+      ...body,
+      createdAt: new Date().toISOString(),
+    };
+
+    payload.push(newItem);
+    mockRecord.dataPayload = payload;
+    mockRecord.markModified('dataPayload');
+    await mockRecord.save();
+
+    return NextResponse.json({ success: true, data: newItem }, { status: 201 });
+  } catch (error: unknown) {
+    console.error('Mock POST Error:', error);
+    return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 });
+  }
+}
+
+// ================= UPDATE (PUT / PATCH) =================
+export async function PUT(request: NextRequest, context: RouteContext) {
+  try {
+    const { id } = await context.params;
+    const urlObj = new URL(request.url);
+    const itemId = urlObj.searchParams.get('itemId');
+    const body = (await request.json()) as Record<string, unknown>;
+
+    if (!itemId) {
+      return NextResponse.json({ error: 'Missing itemId query parameter for update.' }, { status: 400 });
+    }
+
+    await connectDB();
+    const mockRecord = await MockEndpoint.findOne({ endpointId: id });
+
+    if (!mockRecord) {
+      return NextResponse.json({ error: 'Mock endpoint not found or expired.' }, { status: 404 });
+    }
+
+    const payload = (mockRecord.dataPayload || []) as MockItem[];
+    const itemIndex = payload.findIndex((item) => String(item.id) === String(itemId));
+
+    if (itemIndex === -1) {
+      return NextResponse.json({ error: 'Item not found in mock payload.' }, { status: 404 });
+    }
+
+    payload[itemIndex] = {
+      ...payload[itemIndex],
+      ...body,
+      updatedAt: new Date().toISOString(),
+    };
+
+    mockRecord.dataPayload = payload;
+    mockRecord.markModified('dataPayload');
+    await mockRecord.save();
+
+    return NextResponse.json({ success: true, data: payload[itemIndex] }, { status: 200 });
+  } catch (error: unknown) {
+    console.error('Mock PUT Error:', error);
+    return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 });
+  }
+}
+
+// ================= DELETE =================
+export async function DELETE(request: NextRequest, context: RouteContext) {
+  try {
+    const { id } = await context.params;
+    const urlObj = new URL(request.url);
+    const itemId = urlObj.searchParams.get('itemId');
+
+    if (!itemId) {
+      return NextResponse.json({ error: 'Missing itemId query parameter for deletion.' }, { status: 400 });
+    }
+
+    await connectDB();
+    const mockRecord = await MockEndpoint.findOne({ endpointId: id });
+
+    if (!mockRecord) {
+      return NextResponse.json({ error: 'Mock endpoint not found or expired.' }, { status: 404 });
+    }
+
+    const payload = (mockRecord.dataPayload || []) as MockItem[];
+    const initialLength = payload.length;
+    
+    const filteredPayload = payload.filter((item) => String(item.id) !== String(itemId));
+
+    if (filteredPayload.length === initialLength) {
+      return NextResponse.json({ error: 'Item not found in mock payload.' }, { status: 404 });
+    }
+
+    mockRecord.dataPayload = filteredPayload;
+    mockRecord.markModified('dataPayload');
+    await mockRecord.save();
+
+    return NextResponse.json({ success: true, message: `Item ${itemId} deleted successfully.` }, { status: 200 });
+  } catch (error: unknown) {
+    console.error('Mock DELETE Error:', error);
+    return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 });
   }
 }
