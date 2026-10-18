@@ -130,7 +130,7 @@ GET /api/mock/a1b2c3d4?status=401
 
 - Database Layer: MongoDB Atlas (Mongoose ODM with TTL indexing)
 
-Validation: Zod
+- Validation: Zod
 
 ### 📄 License
 This project is open-source software licensed under the AGPL-3.0 License.
