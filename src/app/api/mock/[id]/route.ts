@@ -33,7 +33,13 @@ export async function GET(request: NextRequest, context: RouteContext) {
     const statusCode = parseInt(statusParam || String(mockRecord.statusCode || 200), 10);
 
     if (latency > 0) {
-      const clampedDelay = Math.min(latency, 10000);
+      // Explicit bounds validation to satisfy static analysis security scans
+      const clampedDelay = Math.min(Math.max(Number(latency) || 0, 0), 10000);
+
+      if (clampedDelay > 10000) {
+        return NextResponse.json({ error: 'Delay cannot exceed 10000ms' }, { status: 400 });
+      }
+
       await new Promise((resolve) => setTimeout(resolve, clampedDelay));
     }
 
@@ -144,7 +150,7 @@ export async function DELETE(request: NextRequest, context: RouteContext) {
 
     const payload = (mockRecord.dataPayload || []) as MockItem[];
     const initialLength = payload.length;
-    
+
     const filteredPayload = payload.filter((item) => String(item.id) !== String(itemId));
 
     if (filteredPayload.length === initialLength) {
